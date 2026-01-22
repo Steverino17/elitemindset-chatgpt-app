@@ -54,8 +54,8 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // SSE endpoint for MCP
-  if (req.url === "/sse" && req.method === "POST") {
+  // SSE endpoint for MCP - accepts both GET and POST
+  if (req.url === "/sse") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
