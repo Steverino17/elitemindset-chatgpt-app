@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import http from "http";
-import { Readable } from "stream";
+import { createServer } from "http";
 
 const PORT = parseInt(process.env.PORT || "10000");
 
@@ -34,7 +33,6 @@ const GetMicroActionSchema = z.object({
   user_context: z.string().optional()
 });
 
-// Create MCP server instance
 function createMCPServer() {
   const server = new Server(
     {
@@ -108,77 +106,67 @@ function createMCPServer() {
   return server;
 }
 
-// HTTP server for ChatGPT Apps
-const httpServer = http.createServer(async (req, res) => {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+const MCP_PATH = "/mcp";
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(200);
+const httpServer = createServer(async (req, res) => {
+  const url = new URL(req.url!, `http://${req.headers.host}`);
+
+  // CORS preflight
+  if (req.method === "OPTIONS" && url.pathname === MCP_PATH) {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS, DELETE",
+      "Access-Control-Allow-Headers": "content-type, mcp-session-id",
+      "Access-Control-Expose-Headers": "Mcp-Session-Id",
+    });
     res.end();
     return;
   }
 
   // Health check
-  if (req.url === "/" || req.url === "/health") {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("EliteMindset MCP Server OK");
+  if (req.method === "GET" && url.pathname === "/") {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("EliteMindset MCP Server");
     return;
   }
 
-  // SSE endpoint for ChatGPT Apps
-  if (req.url === "/sse") {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    });
+  // MCP endpoint - handle GET, POST, DELETE
+  const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
+  if (url.pathname === MCP_PATH && req.method && MCP_METHODS.has(req.method)) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
 
-    // Send immediate handshake
-    res.write("event: endpoint\n");
-    res.write("data: /sse\n\n");
-
-    // Create server and transport
     const server = createMCPServer();
-    
-    // Create custom transport using request/response streams
-    const readable = req as Readable;
-    const writable = res;
-    
-    const transport = new StdioServerTransport();
-    
-    // Monkey-patch the transport to use HTTP streams
-    (transport as any).input = readable;
-    (transport as any).output = writable;
-    
-    await server.connect(transport);
-
-    // Keep connection alive
-    const keepAlive = setInterval(() => {
-      if (!res.writableEnded) {
-        res.write(": keepalive\n\n");
-      } else {
-        clearInterval(keepAlive);
-      }
-    }, 30000);
-
-    req.on("close", () => {
-      clearInterval(keepAlive);
-      console.log("Client disconnected");
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // stateless mode
+      enableJsonResponse: true,
     });
 
+    res.on("close", () => {
+      transport.close();
+      server.close();
+    });
+
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      console.error("MCP request error:", error);
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "text/plain" });
+        res.end("Internal server error");
+      }
+    }
     return;
   }
 
-  // 404
-  res.writeHead(404);
-  res.end("Not Found");
+  // 404 for other routes
+  res.writeHead(404, { "content-type": "text/plain" });
+  res.end("Not found");
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`✓ EliteMindset MCP Server running on port ${PORT}`);
-  console.log(`✓ Health: /health`);
-  console.log(`✓ SSE: /sse`);
+  console.log(`✓ MCP endpoint: ${MCP_PATH}`);
+  console.log(`✓ Health check: /`);
 });
