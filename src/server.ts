@@ -12,13 +12,50 @@ const PORT = parseInt(process.env.PORT || "10000");
 
 type CoachingState = "overwhelmed" | "stuck" | "ready_to_act" | "unclear_direction";
 
+// SHORT, ACTIONABLE MESSAGES (Mode 1: Acute Overwhelm)
+// Max 90-120 words | ONE instruction set | ZERO explanations
 const stateMessages: Record<CoachingState, string> = {
-  overwhelmed: "You're feeling scattered right now, and that's completely okay. Let's break this down into one tiny, manageable step. What's one small thing you could do in the next 5 minutes?",
-  stuck: "Being stuck doesn't mean you're failing—it means you're at a decision point. Let's get curious: What's the smallest experiment you could try right now?",
-  ready_to_act: "You're ready to move forward! Let's channel that energy into clear action. What's the single most important thing you want to accomplish next?",
-  unclear_direction: "Not knowing the path forward is actually valuable information. Let's explore: What outcome would feel meaningful to you right now?"
+  overwhelmed: `You're not stuck — your brain just has too many open loops.
+
+Do this now:
+1. Set a 10-minute timer
+2. Write the ONE thing you're avoiding
+3. Do the smallest visible action on it for 5 minutes
+4. Stop when the timer ends
+
+No deciding. Just motion.
+
+When you're done, come back.`,
+
+  stuck: `Good. You moved.
+
+Now do ONE more small thing:
+• A file rename
+• A single sentence
+• One email
+
+Do it, then reply: DONE
+
+Small wins build momentum.`,
+
+  ready_to_act: `You're building momentum.
+
+What's ONE more small thing you can do in the next 60 seconds?
+
+Do it. Reply when done.
+
+Motion beats perfection.`,
+
+  unclear_direction: `You need clarity, not motivation.
+
+List your top 3 concerns.
+
+I'll help you identify the ONE thing that matters most right now.
+
+Focus first. Action second.`
 };
 
+// Image URLs
 const stateImages: Record<CoachingState, string> = {
   overwhelmed: "https://i.postimg.cc/2yL0yDkp/overwhelmed.png",
   stuck: "https://i.postimg.cc/wxhJHG1m/stuck.png",
@@ -51,18 +88,18 @@ function createMCPServer() {
       tools: [
         {
           name: "get_micro_action",
-          description: "Get personalized micro-action coaching based on your current mental state",
+          description: "Get personalized micro-action coaching based on your current mental state. Helps users who are overwhelmed, stuck, or unclear on next steps.",
           inputSchema: {
             type: "object",
             properties: {
               current_state: {
                 type: "string",
                 enum: ["overwhelmed", "stuck", "ready_to_act", "unclear_direction"],
-                description: "Your current mental/emotional state"
+                description: "The user's current mental/emotional state: overwhelmed (too many things), stuck (don't know what to do), ready_to_act (momentum building), unclear_direction (need clarity)"
               },
               user_context: {
                 type: "string",
-                description: "Optional context about what you're working on"
+                description: "Optional context about what the user is working on or struggling with"
               }
             },
             required: ["current_state"]
@@ -81,8 +118,14 @@ function createMCPServer() {
       
       let response = stateMessages[state];
       
-      if (interactionCount >= 3) {
-        response += "\n\n✨ Ready for deeper transformation? Visit EliteMindset.ai for personalized coaching programs.";
+      // Add CTA after 3 interactions (gentle, curious)
+      if (interactionCount === 3 || interactionCount === 4) {
+        response += "\n\n✨ You're building momentum. Want to see what clarity looks like when it's a daily habit?\n→ EliteMindset.ai";
+      }
+      
+      // Add stronger CTA after 5+ interactions (direct, punchy)
+      if (interactionCount >= 5) {
+        response += "\n\n✨ Motion beats perfection. Clarity beats chaos.\nMake this your daily edge → EliteMindset.ai";
       }
       
       return {
@@ -126,7 +169,7 @@ const httpServer = createServer(async (req, res) => {
   // Health check
   if (req.method === "GET" && url.pathname === "/") {
     res.writeHead(200, { "content-type": "text/plain" });
-    res.end("EliteMindset MCP Server");
+    res.end("EliteMindset MCP Server - Clarity in action");
     return;
   }
 
@@ -168,5 +211,6 @@ const httpServer = createServer(async (req, res) => {
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`✓ EliteMindset MCP Server running on port ${PORT}`);
   console.log(`✓ MCP endpoint: ${MCP_PATH}`);
+  console.log(`✓ Mode: Acute Overwhelm (90-120 word responses)`);
   console.log(`✓ Health check: /`);
 });
