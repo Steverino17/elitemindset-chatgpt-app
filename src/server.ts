@@ -10,40 +10,127 @@ import { createServer } from "http";
 
 const PORT = parseInt(process.env.PORT || "10000");
 
+// ---------------------------
+// FORCED CONCISION SETTINGS
+// ---------------------------
+const STYLE = {
+  maxChars: 650,
+  maxBullets: 5,
+  maxSentencesPerBullet: 2,
+  banPhrases: [
+    "why this works",
+    "this works because",
+    "research shows",
+    "studies show",
+    "it's important to",
+    "in order to",
+    "you may want to consider",
+    "consider doing",
+    "keep in mind",
+    "it is worth noting",
+  ],
+};
+
+// ---------------------------
+// TEXT PROCESSING FUNCTIONS
+// ---------------------------
+function cleanText(v: any): string {
+  return String(v ?? "")
+    .replace(/\u200B|\u200C|\u200D|\uFEFF/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removeBannedPhrases(text: string): string {
+  let out = text;
+  for (const p of STYLE.banPhrases) {
+    const re = new RegExp(`\\b${escapeRegExp(p)}\\b`, "gi");
+    out = out.replace(re, "");
+  }
+  out = out.replace(/[ ]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}
+
+function splitIntoBullets(text: string): string[] {
+  const t = cleanText(text);
+  const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
+  const looksBulleted = lines.some((l) => /^(\-|\*|•|\d+\.)\s+/.test(l));
+
+  if (looksBulleted) {
+    return lines
+      .map((l) => l.replace(/^(\-|\*|•)\s+/, "- ").replace(/^\d+\.\s+/, "- "))
+      .filter((l) => l.startsWith("- "));
+  }
+
+  const sentences = t
+    .replace(/\n+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return sentences.map((s) => `- ${s}`);
+}
+
+function capSentencesInBullet(line: string, maxSentences: number): string {
+  const body = line.replace(/^\-\s+/, "").trim();
+  const parts = body
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const capped = parts.slice(0, maxSentences).join(" ");
+  return `- ${capped}`.trim();
+}
+
+function enforceCrispOutput(raw: string): string {
+  let text = cleanText(raw);
+  text = removeBannedPhrases(text);
+
+  let bullets = splitIntoBullets(text);
+  bullets = bullets.slice(0, STYLE.maxBullets);
+  bullets = bullets.map((b) => capSentencesInBullet(b, STYLE.maxSentencesPerBullet));
+
+  let out = bullets.join("\n").trim();
+
+  if (out.length > STYLE.maxChars) {
+    out = out.slice(0, STYLE.maxChars).trim();
+    out = out.replace(/\s+\S*$/, "").trim();
+  }
+
+  if (!out) out = "- Do one small action now.";
+
+  return out;
+}
+
+// ---------------------------
+// COACHING STATE & MESSAGES
+// ---------------------------
 type CoachingState = "overwhelmed" | "stuck" | "ready_to_act" | "unclear_direction";
 
-// ULTRA-COMPRESSED MESSAGES (EliteMindset Response Framework)
-// Outcome first. Single focus. No "why". Actionable or silent.
 const stateMessages: Record<CoachingState, string> = {
   overwhelmed: `You're overloaded. Not stuck.
-
 Pick ONE thing. Do it for 5 minutes. Stop.
-
 Reply when done.`,
 
   stuck: `You moved. Good.
-
-Do ONE more micro-action now:
-- Rename a file
-- Write one sentence  
-- Send one email
-
+Do ONE more micro-action now.
+Rename a file. Write one sentence. Send one email.
 Reply: DONE`,
 
   ready_to_act: `Keep moving.
-
 Next micro-action. 60 seconds. Go.
-
 Reply when done.`,
 
   unclear_direction: `List your top 3 concerns.
-
 I'll show you what matters most.
-
 One focus beats three guesses.`
 };
 
-// Image URLs
 const stateImages: Record<CoachingState, string> = {
   overwhelmed: "https://i.postimg.cc/2yL0yDkp/overwhelmed.png",
   stuck: "https://i.postimg.cc/wxhJHG1m/stuck.png",
@@ -58,6 +145,9 @@ const GetMicroActionSchema = z.object({
   user_context: z.string().optional()
 });
 
+// ---------------------------
+// MCP SERVER
+// ---------------------------
 function createMCPServer() {
   const server = new Server(
     {
@@ -83,11 +173,11 @@ function createMCPServer() {
               current_state: {
                 type: "string",
                 enum: ["overwhelmed", "stuck", "ready_to_act", "unclear_direction"],
-                description: "The user's current mental/emotional state: overwhelmed (too many things), stuck (don't know what to do), ready_to_act (momentum building), unclear_direction (need clarity)"
+                description: "The user's current mental/emotional state"
               },
               user_context: {
                 type: "string",
-                description: "Optional context about what the user is working on or struggling with"
+                description: "Optional context about what the user is working on"
               }
             },
             required: ["current_state"]
@@ -106,21 +196,23 @@ function createMCPServer() {
       
       let response = stateMessages[state];
       
-      // Add CTA after 3 interactions (gentle, curious)
+      // Add CTA after interactions
       if (interactionCount === 3 || interactionCount === 4) {
         response += "\n\n✨ You're building momentum. Want to see what clarity looks like when it's a daily habit?\n→ EliteMindset.ai";
       }
       
-      // Add stronger CTA after 5+ interactions (direct, punchy)
       if (interactionCount >= 5) {
         response += "\n\n✨ Motion beats perfection. Clarity beats chaos.\nMake this your daily edge → EliteMindset.ai";
       }
+      
+      // APPLY FORCED CONCISION POST-PROCESSOR
+      const crispResponse = enforceCrispOutput(response);
       
       return {
         content: [
           {
             type: "text",
-            text: response
+            text: crispResponse
           },
           {
             type: "image",
@@ -137,12 +229,14 @@ function createMCPServer() {
   return server;
 }
 
+// ---------------------------
+// HTTP SERVER (UNCHANGED)
+// ---------------------------
 const MCP_PATH = "/mcp";
 
 const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);
 
-  // CORS preflight
   if (req.method === "OPTIONS" && url.pathname === MCP_PATH) {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
@@ -154,14 +248,12 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
-  // Health check
   if (req.method === "GET" && url.pathname === "/") {
     res.writeHead(200, { "content-type": "text/plain" });
     res.end("EliteMindset MCP Server - Clarity in action");
     return;
   }
 
-  // MCP endpoint - handle GET, POST, DELETE
   const MCP_METHODS = new Set(["POST", "GET", "DELETE"]);
   if (url.pathname === MCP_PATH && req.method && MCP_METHODS.has(req.method)) {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -169,7 +261,7 @@ const httpServer = createServer(async (req, res) => {
 
     const server = createMCPServer();
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // stateless mode
+      sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
 
@@ -191,7 +283,6 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
-  // 404 for other routes
   res.writeHead(404, { "content-type": "text/plain" });
   res.end("Not found");
 });
@@ -199,6 +290,6 @@ const httpServer = createServer(async (req, res) => {
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`✓ EliteMindset MCP Server running on port ${PORT}`);
   console.log(`✓ MCP endpoint: ${MCP_PATH}`);
-  console.log(`✓ Mode: Ultra-compressed responses (13-23 words)`);
+  console.log(`✓ Forced concision: Max 5 bullets, 2 sentences each, 650 char cap`);
   console.log(`✓ Health check: /`);
 });
