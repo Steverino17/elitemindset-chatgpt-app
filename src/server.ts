@@ -10,7 +10,6 @@ import http from "http";
 
 const PORT = parseInt(process.env.PORT || "10000");
 
-// Define the four EliteMindset states
 type CoachingState = "overwhelmed" | "stuck" | "ready_to_act" | "unclear_direction";
 
 const stateMessages: Record<CoachingState, string> = {
@@ -34,9 +33,7 @@ const GetMicroActionSchema = z.object({
   user_context: z.string().optional()
 });
 
-// Create HTTP server
 const httpServer = http.createServer(async (req, res) => {
-  // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -47,24 +44,14 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // Health check endpoint
   if (req.url === "/" || req.url === "/health" || req.url === "/healthz") {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("OK");
     return;
   }
 
-  // SSE endpoint for MCP - accepts both GET and POST
+  // SSE endpoint - let SSEServerTransport handle ALL headers
   if (req.url === "/sse") {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    });
-
-    // Send immediate handshake
-    res.write(`event: endpoint\ndata: /sse\n\n`);
-    
     const server = new Server(
       {
         name: "elitemindset-server",
@@ -134,12 +121,12 @@ const httpServer = http.createServer(async (req, res) => {
       throw new Error(`Unknown tool: ${request.params.name}`);
     });
 
+    // Let SSEServerTransport handle the response completely
     const transport = new SSEServerTransport("/sse", res);
     await server.connect(transport);
     return;
   }
 
-  // 404 for other routes
   res.writeHead(404);
   res.end("Not Found");
 });
