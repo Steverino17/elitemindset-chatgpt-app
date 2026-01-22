@@ -12,8 +12,8 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Serve static files from root directory
-app.use(express.static(path.join(__dirname, '..')));
+// Serve static files from project root (for images in public folder)
+app.use(express.static(path.join(__dirname, '../..')));
 
 // CORS headers
 app.use((req, res, next) => {
@@ -71,25 +71,25 @@ interface UserSession {
 
 const sessions = new Map<string, UserSession>();
 
-// State responses - images in ROOT folder
+// State responses - IMAGES IN public/images/ FOLDER
 const stateResponses: StateResponse = {
   overwhelmed: {
-    imagePath: '/overwhelmed.png',
+    imagePath: '/public/images/overwhelmed.png',
     message: "I can see you're feeling overwhelmed right now. Let's break this down together.\n\n" +
              "What's the ONE smallest thing you could do in the next 5 minutes that would help?"
   },
   stuck: {
-    imagePath: '/stuck.png',
+    imagePath: '/public/images/stuck.png',
     message: "You're stuck, and that's completely normal. Let's get you unstuck.\n\n" +
              "What's preventing you from taking action right now?"
   },
   'ready-to-act': {
-    imagePath: '/ready-to-act.png',
+    imagePath: '/public/images/ready-to-act.png',
     message: "Great! You're ready to move forward. Let's make this happen.\n\n" +
              "What's your very next micro-action?"
   },
   'unclear-direction': {
-    imagePath: '/Unclear-direction.png',
+    imagePath: '/public/images/Unclear-direction.png',
     message: "It sounds like you need clarity before taking action.\n\n" +
              "What specific question, if answered, would help you move forward?"
   }
