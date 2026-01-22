@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import http from "http";
+import { Readable } from "stream";
 
 const PORT = parseInt(process.env.PORT || "10000");
 
@@ -33,7 +34,83 @@ const GetMicroActionSchema = z.object({
   user_context: z.string().optional()
 });
 
+// Create MCP server instance
+function createMCPServer() {
+  const server = new Server(
+    {
+      name: "elitemindset-server",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+      tools: [
+        {
+          name: "get_micro_action",
+          description: "Get personalized micro-action coaching based on your current mental state",
+          inputSchema: {
+            type: "object",
+            properties: {
+              current_state: {
+                type: "string",
+                enum: ["overwhelmed", "stuck", "ready_to_act", "unclear_direction"],
+                description: "Your current mental/emotional state"
+              },
+              user_context: {
+                type: "string",
+                description: "Optional context about what you're working on"
+              }
+            },
+            required: ["current_state"]
+          }
+        }
+      ],
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (request.params.name === "get_micro_action") {
+      const args = GetMicroActionSchema.parse(request.params.arguments);
+      const state = args.current_state as CoachingState;
+      
+      interactionCount++;
+      
+      let response = stateMessages[state];
+      
+      if (interactionCount >= 3) {
+        response += "\n\n✨ Ready for deeper transformation? Visit EliteMindset.ai for personalized coaching programs.";
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: response
+          },
+          {
+            type: "image",
+            data: stateImages[state],
+            mimeType: "image/png"
+          }
+        ],
+      };
+    }
+    
+    throw new Error(`Unknown tool: ${request.params.name}`);
+  });
+
+  return server;
+}
+
+// HTTP server for ChatGPT Apps
 const httpServer = http.createServer(async (req, res) => {
+  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -44,95 +121,64 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === "/" || req.url === "/health" || req.url === "/healthz") {
+  // Health check
+  if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("OK");
+    res.end("EliteMindset MCP Server OK");
     return;
   }
 
-  // SSE endpoint - let SSEServerTransport handle ALL headers
+  // SSE endpoint for ChatGPT Apps
   if (req.url === "/sse") {
-    const server = new Server(
-      {
-        name: "elitemindset-server",
-        version: "1.0.0",
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
-
-    server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: [
-          {
-            name: "get_micro_action",
-            description: "Get personalized micro-action coaching based on your current mental state",
-            inputSchema: {
-              type: "object",
-              properties: {
-                current_state: {
-                  type: "string",
-                  enum: ["overwhelmed", "stuck", "ready_to_act", "unclear_direction"],
-                  description: "Your current mental/emotional state"
-                },
-                user_context: {
-                  type: "string",
-                  description: "Optional context about what you're working on"
-                }
-              },
-              required: ["current_state"]
-            }
-          }
-        ],
-      };
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
     });
 
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      if (request.params.name === "get_micro_action") {
-        const args = GetMicroActionSchema.parse(request.params.arguments);
-        const state = args.current_state as CoachingState;
-        
-        interactionCount++;
-        
-        let response = stateMessages[state];
-        
-        if (interactionCount >= 3) {
-          response += "\n\n✨ Ready for deeper transformation? Visit EliteMindset.ai for personalized coaching programs.";
-        }
-        
-        return {
-          content: [
-            {
-              type: "text",
-              text: response
-            },
-            {
-              type: "image",
-              data: stateImages[state],
-              mimeType: "image/png"
-            }
-          ],
-        };
-      }
-      
-      throw new Error(`Unknown tool: ${request.params.name}`);
-    });
+    // Send immediate handshake
+    res.write("event: endpoint\n");
+    res.write("data: /sse\n\n");
 
-    // Let SSEServerTransport handle the response completely
-    const transport = new SSEServerTransport("/sse", res);
+    // Create server and transport
+    const server = createMCPServer();
+    
+    // Create custom transport using request/response streams
+    const readable = req as Readable;
+    const writable = res;
+    
+    const transport = new StdioServerTransport();
+    
+    // Monkey-patch the transport to use HTTP streams
+    (transport as any).input = readable;
+    (transport as any).output = writable;
+    
     await server.connect(transport);
+
+    // Keep connection alive
+    const keepAlive = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(": keepalive\n\n");
+      } else {
+        clearInterval(keepAlive);
+      }
+    }, 30000);
+
+    req.on("close", () => {
+      clearInterval(keepAlive);
+      console.log("Client disconnected");
+    });
+
     return;
   }
 
+  // 404
   res.writeHead(404);
   res.end("Not Found");
 });
 
 httpServer.listen(PORT, () => {
   console.log(`✓ EliteMindset MCP Server running on port ${PORT}`);
-  console.log(`✓ Health check: /health`);
-  console.log(`✓ SSE endpoint: /sse`);
+  console.log(`✓ Health: /health`);
+  console.log(`✓ SSE: /sse`);
 });
