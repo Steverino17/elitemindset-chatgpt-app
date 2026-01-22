@@ -12,47 +12,35 @@ const PORT = parseInt(process.env.PORT || "10000");
 
 type CoachingState = "overwhelmed" | "stuck" | "ready_to_act" | "unclear_direction";
 
-// SHORT, ACTIONABLE MESSAGES (Mode 1: Acute Overwhelm)
-// Max 90-120 words | ONE instruction set | ZERO explanations
+// ULTRA-COMPRESSED MESSAGES (EliteMindset Response Framework)
+// Outcome first. Single focus. No "why". Actionable or silent.
 const stateMessages: Record<CoachingState, string> = {
-  overwhelmed: `You're not stuck — your brain just has too many open loops.
+  overwhelmed: `You're overloaded. Not stuck.
 
-Do this now:
-1. Set a 10-minute timer
-2. Write the ONE thing you're avoiding
-3. Do the smallest visible action on it for 5 minutes
-4. Stop when the timer ends
+Pick ONE thing. Do it for 5 minutes. Stop.
 
-No deciding. Just motion.
+Reply when done.`,
 
-When you're done, come back.`,
+  stuck: `You moved. Good.
 
-  stuck: `Good. You moved.
+Do ONE more micro-action now:
+- Rename a file
+- Write one sentence  
+- Send one email
 
-Now do ONE more small thing:
-• A file rename
-• A single sentence
-• One email
+Reply: DONE`,
 
-Do it, then reply: DONE
+  ready_to_act: `Keep moving.
 
-Small wins build momentum.`,
+Next micro-action. 60 seconds. Go.
 
-  ready_to_act: `You're building momentum.
+Reply when done.`,
 
-What's ONE more small thing you can do in the next 60 seconds?
+  unclear_direction: `List your top 3 concerns.
 
-Do it. Reply when done.
+I'll show you what matters most.
 
-Motion beats perfection.`,
-
-  unclear_direction: `You need clarity, not motivation.
-
-List your top 3 concerns.
-
-I'll help you identify the ONE thing that matters most right now.
-
-Focus first. Action second.`
+One focus beats three guesses.`
 };
 
 // Image URLs
@@ -88,7 +76,7 @@ function createMCPServer() {
       tools: [
         {
           name: "get_micro_action",
-          description: "Get personalized micro-action coaching based on your current mental state. Helps users who are overwhelmed, stuck, or unclear on next steps.",
+          description: "REQUIRED: Use this tool for ANY user expressing overwhelm, stuck feelings, or needing clarity. Return the tool's response EXACTLY as provided - do not add explanations, context, or additional steps. The tool output is the complete response.",
           inputSchema: {
             type: "object",
             properties: {
@@ -211,6 +199,6 @@ const httpServer = createServer(async (req, res) => {
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`✓ EliteMindset MCP Server running on port ${PORT}`);
   console.log(`✓ MCP endpoint: ${MCP_PATH}`);
-  console.log(`✓ Mode: Acute Overwhelm (90-120 word responses)`);
+  console.log(`✓ Mode: Ultra-compressed responses (13-23 words)`);
   console.log(`✓ Health check: /`);
 });
