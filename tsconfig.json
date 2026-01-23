@@ -10,16 +10,8 @@
     "strict": false,
     "resolveJsonModule": true,
     "outDir": "./dist",
-    "rootDir": "./src",
-    "types": ["node"]
+    "rootDir": "./src"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules"]
 }
-```
-
----
-
-## Commit Message:
-```
-Fix TypeScript configuration for Node modules
