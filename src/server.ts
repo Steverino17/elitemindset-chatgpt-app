@@ -12,8 +12,9 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Serve static files from project root (for images in public folder)
-app.use(express.static(path.join(__dirname, '../..')));
+// Serve static files - pointing to project root from dist folder
+const projectRoot = path.join(__dirname, '..');
+app.use(express.static(projectRoot));
 
 // CORS headers
 app.use((req, res, next) => {
@@ -71,7 +72,7 @@ interface UserSession {
 
 const sessions = new Map<string, UserSession>();
 
-// State responses - IMAGES IN public/images/ FOLDER
+// State responses - images in public/images/ folder
 const stateResponses: StateResponse = {
   overwhelmed: {
     imagePath: '/public/images/overwhelmed.png',
