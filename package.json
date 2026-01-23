@@ -5,8 +5,9 @@
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
-    "build": "tsc && cp -r public dist/",
-    "start": "node dist/server.js"
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "postbuild": "node -e \"require('fs').cpSync('public', 'dist/public', {recursive: true})\""
   },
   "keywords": [],
   "author": "",
@@ -20,10 +21,3 @@
     "typescript": "^5.1.6"
   }
 }
-```
-
----
-
-## Commit Message:
-```
-Copy public folder during build
