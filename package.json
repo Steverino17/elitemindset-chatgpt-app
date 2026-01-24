@@ -1,16 +1,19 @@
 {
   "name": "elitemindset-chatgpt-app",
   "version": "1.0.0",
-  "description": "Micro-action clarity coaching for ChatGPT users experiencing procrastination and overwhelm.",
-  "main": "src/server.js",
+  "private": true,
   "type": "module",
+  "description": "EliteMindset MCP Server for ChatGPT",
+  "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2"
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^4.19.2",
+    "zod": "^3.22.4"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
