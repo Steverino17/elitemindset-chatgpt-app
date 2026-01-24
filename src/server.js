@@ -30,7 +30,35 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy' });
 });
 
-// SSE endpoint for MCP
+// MCP endpoint for ChatGPT
+app.all('/mcp', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendEvent({ 
+    type: 'endpoint',
+    endpoint: '/message',
+    transport: 'http'
+  });
+
+  const keepAlive = setInterval(() => {
+    res.write(':keepalive\n\n');
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+  });
+});
+
+// SSE endpoint
 app.get('/sse', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -149,5 +177,15 @@ const server = createServer(app);
 server.listen(PORT, () => {
   console.log(`EliteMindset MCP Server running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
   console.log(`SSE endpoint: http://localhost:${PORT}/sse`);
 });
+```
+
+**Commit message:** `Add MCP endpoint for ChatGPT`
+
+---
+
+Then use this URL in ChatGPT:
+```
+https://elitemindset-chatgpt-app.onrender.com/mcp
