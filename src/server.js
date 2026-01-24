@@ -3,26 +3,25 @@ import express from "express";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { randomUUID } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 10000;
 
-// IMPORTANT: Set this to your Render origin (no trailing slash)
-const ORIGIN = process.env.PUBLIC_ORIGIN || "https://elitemindset-chatgpt-app.onrender.com";
-
-// ---------------------------- Express basics ----------------------------
+// IMPORTANT: must match your Render public URL (no trailing slash)
+const ORIGIN = process.env.PUBLIC_ORIGIN || "https://elitemmindset-chatgpt-app.onrender.com";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
+// Serve images at /images/<file>.png
 app.use(
   "/images",
   express.static(path.join(__dirname, "..", "public", "images"), {
@@ -30,6 +29,7 @@ app.use(
   })
 );
 
+// CORS (keep permissive for testing)
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
@@ -38,35 +38,33 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---------------------- Health ----------------------
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: "LOCKDOWN-v1" });
+  res.json({ status: "ok", version: "LOCKDOWN-v2" });
 });
 
-// ---------------------------- Output lockdown ----------------------------
-
+// ---------------------- LOCKDOWN OUTPUT ----------------------
 function clean(s) {
   return String(s ?? "").replace(/\s+/g, " ").trim();
 }
 
-function removeBadStuff(s) {
-  // Remove list-like and “coachy” formatting triggers
+function stripBad(s) {
+  // no bullets / no newlines / no questions / no emojis / no list markers
   return clean(s)
-    .replace(/[\u2022\u2023\u25E6\u2043\u2219•●▪︎◦‣⁃]/g, "") // bullets
-    .replace(/(\r\n|\n|\r)/g, " ") // no newlines
-    .replace(/\?/g, "") // no questions
-    .replace(/:/g, "") // avoids "Step:" patterns
-    .replace(/-/g, " ") // avoids list vibes
-    .replace(/\s{2,}/g, " ")
+    .replace(/[\u2022\u2023\u25E6\u2043\u2219•●▪︎◦‣⁃]/g, "")
+    .replace(/(\r\n|\n|\r)/g, " ")
+    .replace(/\?/g, "")
+    .replace(/:/g, "")
+    .replace(/-/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "") // emoji block
     .trim();
 }
 
-function hardCap(s, max = 160) {
-  const t = removeBadStuff(s);
+function cap(s, max = 160) {
+  const t = stripBad(s);
   if (t.length <= max) return t;
   return t.slice(0, max - 1).trimEnd() + "…";
 }
-
-// ---------------------------- State detection ----------------------------
 
 const STATE = {
   OVERWHELMED: "overwhelmed",
@@ -86,9 +84,7 @@ function detectState(userText) {
     t.includes("cant focus") ||
     t.includes("can't focus") ||
     t.includes("losing focus")
-  ) {
-    return STATE.OVERWHELMED;
-  }
+  ) return STATE.OVERWHELMED;
 
   if (
     t.includes("stuck") ||
@@ -96,29 +92,23 @@ function detectState(userText) {
     t.includes("avoid") ||
     t.includes("can't start") ||
     t.includes("cant start") ||
-    t.includes("scroll")
-  ) {
-    return STATE.STUCK;
-  }
+    t.includes("scroll") ||
+    t.includes("emails") ||
+    t.includes("inbox")
+  ) return STATE.STUCK;
 
-  if (t.includes("ready") || t.includes("let's do") || t.includes("lets do") || t.includes("start now")) {
+  if (t.includes("ready") || t.includes("lets do") || t.includes("let's do") || t.includes("start now"))
     return STATE.READY;
-  }
 
   return STATE.UNCLEAR;
 }
 
-// ---------------------------- One-sentence actions ----------------------------
-// Each action is intentionally ONE sentence, no lists, no explanations.
+// One sentence only. No explanations. No options.
 const ACTIONS = {
-  [STATE.OVERWHELMED]:
-    "Set a 5 minute timer and do the smallest task that lowers your stress right now.",
-  [STATE.STUCK]:
-    "Open the task and do a 2 minute version of it with zero pressure to finish.",
-  [STATE.READY]:
-    "Write your next micro action in 7 words or less and do it immediately.",
-  [STATE.UNCLEAR]:
-    "Choose one outcome for the next 15 minutes and ignore everything else.",
+  [STATE.OVERWHELMED]: "Set a 5 minute timer and do one tiny task that lowers stress immediately.",
+  [STATE.STUCK]: "Open the task and do the first 2 minutes only, then stop.",
+  [STATE.READY]: "Write your next micro action in 7 words, then do it now.",
+  [STATE.UNCLEAR]: "Pick one outcome for the next 15 minutes and ignore everything else.",
 };
 
 const IMAGES = {
@@ -128,25 +118,22 @@ const IMAGES = {
   [STATE.UNCLEAR]: "unclear-direction.png",
 };
 
-function buildLockedResponse(userText) {
+function buildLockedText(userText) {
   const state = detectState(userText);
   const imageUrl = `${ORIGIN}/images/${IMAGES[state]}`;
+  const sentence = cap(ACTIONS[state], 140);
 
-  // Dev Mode screenshot-friendly: markdown image + ONE locked sentence.
-  // The sentence is hard-capped and stripped of bullets/questions/newlines.
-  const sentence = hardCap(ACTIONS[state], 160);
-
-  // EXACT format: image then sentence (no bullets, no extras)
+  // Screenshot-friendly in Dev Mode: markdown image + one sentence
   const text = `![](${imageUrl}) ${sentence}`;
 
-  return hardCap(text, 260); // keeps total tight even with URL
+  // Keep total tight even with URL
+  return cap(text, 260);
 }
 
-// ---------------------------- MCP server ----------------------------
-
+// ---------------------- MCP (Streamable HTTP) ----------------------
 function createEliteMindsetServer() {
   const server = new McpServer({
-    name: "elitemindset-mcp",
+    name: "elitemmindset-mcp",
     version: "1.0.0",
   });
 
@@ -160,23 +147,17 @@ function createEliteMindsetServer() {
     },
     async ({ message, goal, context }) => {
       const userText = [message, goal, context].filter(Boolean).join(" ");
-      const locked = buildLockedResponse(userText);
+      const locked = buildLockedText(userText);
 
+      // HARD: tool returns only the final output
       return {
-        content: [
-          {
-            type: "text",
-            text: locked,
-          },
-        ],
+        content: [{ type: "text", text: locked }],
       };
     }
   );
 
   return server;
 }
-
-// ---------------------------- Streamable HTTP (/mcp) ----------------------------
 
 const transports = Object.create(null);
 
@@ -237,11 +218,51 @@ async function handleMcpSessionRequest(req, res) {
 app.get("/mcp", handleMcpSessionRequest);
 app.delete("/mcp", handleMcpSessionRequest);
 
-// ---------------------------- Start ----------------------------
+// ---------------------- Legacy Dev-Mode Fallback: /sse + /messages ----------------------
+// Many Dev Mode builds still call these. We hard-return the same locked output.
 
+app.get("/sse", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+
+  // Tell the client where to POST messages
+  res.write(`data: ${JSON.stringify({ type: "endpoint", endpoint: "/messages" })}\n\n`);
+
+  const keepAlive = setInterval(() => {
+    res.write(":keepalive\n\n");
+  }, 25000);
+
+  req.on("close", () => clearInterval(keepAlive));
+});
+
+// Legacy POST used by some clients
+app.post("/messages", (req, res) => {
+  try {
+    const { messages } = req.body || {};
+    const last = Array.isArray(messages) ? messages[messages.length - 1] : null;
+    const userText = last?.content?.text || "";
+
+    const locked = buildLockedText(userText);
+
+    // IMPORTANT: respond with ONLY the locked text
+    res.json({
+      model: "elitemmindset-lockdown-v2",
+      content: [{ type: "text", text: locked }],
+    });
+  } catch (err) {
+    console.error("/messages error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ---------------------- Start ----------------------
 createServer(app).listen(PORT, () => {
-  console.log(`EliteMindset MCP server listening on :${PORT}`);
+  console.log(`EliteMindset server listening on :${PORT}`);
   console.log(`Health: ${ORIGIN}/health`);
   console.log(`Images: ${ORIGIN}/images/<file>.png`);
-  console.log(`MCP: ${ORIGIN}/mcp`);
+  console.log(`MCP (primary): POST/GET/DELETE ${ORIGIN}/mcp`);
+  console.log(`Legacy (fallback): GET ${ORIGIN}/sse + POST ${ORIGIN}/messages`);
 });
