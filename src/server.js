@@ -1,24 +1,28 @@
 // src/server.js
 import express from "express";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
 import path from "node:path";
-import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const PORT = process.env.PORT || 10000;
+
+// IMPORTANT: Set this to your Render origin (no trailing slash)
+const ORIGIN = process.env.PUBLIC_ORIGIN || "https://elitemindset-chatgpt-app.onrender.com";
+
+// ---------------------------- Express basics ----------------------------
+
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// Static images (debug only)
 app.use(
   "/images",
   express.static(path.join(__dirname, "..", "public", "images"), {
@@ -26,7 +30,6 @@ app.use(
   })
 );
 
-// CORS
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
@@ -35,10 +38,35 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health
-app.get("/health", (req, res) => res.json({ status: "ok", version: "EMv2" }));
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", version: "LOCKDOWN-v1" });
+});
 
-/* ----------------------------- State + output ----------------------------- */
+// ---------------------------- Output lockdown ----------------------------
+
+function clean(s) {
+  return String(s ?? "").replace(/\s+/g, " ").trim();
+}
+
+function removeBadStuff(s) {
+  // Remove list-like and “coachy” formatting triggers
+  return clean(s)
+    .replace(/[\u2022\u2023\u25E6\u2043\u2219•●▪︎◦‣⁃]/g, "") // bullets
+    .replace(/(\r\n|\n|\r)/g, " ") // no newlines
+    .replace(/\?/g, "") // no questions
+    .replace(/:/g, "") // avoids "Step:" patterns
+    .replace(/-/g, " ") // avoids list vibes
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function hardCap(s, max = 160) {
+  const t = removeBadStuff(s);
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1).trimEnd() + "…";
+}
+
+// ---------------------------- State detection ----------------------------
 
 const STATE = {
   OVERWHELMED: "overwhelmed",
@@ -46,39 +74,6 @@ const STATE = {
   READY: "ready-to-act",
   UNCLEAR: "unclear-direction",
 };
-
-const STATE_CONTENT = {
-  [STATE.OVERWHELMED]: {
-    imageFile: "overwhelmed.png",
-    nextStep: "Set a 5-minute timer and do the smallest task that reduces stress fastest.",
-    question: "What is that one small task?",
-  },
-  [STATE.STUCK]: {
-    imageFile: "stuck.png",
-    nextStep: "Do a 2-minute version of the task (ridiculously small).",
-    question: "What is the 2-minute version?",
-  },
-  [STATE.READY]: {
-    imageFile: "ready-to-act.png",
-    nextStep: "Write the next micro-action and do it now.",
-    question: "What is your next micro-action?",
-  },
-  [STATE.UNCLEAR]: {
-    imageFile: "unclear-direction.png",
-    nextStep: "Choose one outcome for the next 15 minutes and ignore everything else.",
-    question: "What outcome matters most right now?",
-  },
-};
-
-function clean(v) {
-  return String(v ?? "").trim();
-}
-
-function cap(text, maxChars = 190) {
-  const t = clean(text).replace(/\s+/g, " ");
-  if (t.length <= maxChars) return t;
-  return t.slice(0, maxChars - 1) + "…";
-}
 
 function detectState(userText) {
   const t = clean(userText).toLowerCase();
@@ -88,9 +83,12 @@ function detectState(userText) {
     t.includes("too much") ||
     t.includes("paralyz") ||
     t.includes("spinning") ||
-    t.includes("can't handle") ||
-    t.includes("cant handle")
-  ) return STATE.OVERWHELMED;
+    t.includes("cant focus") ||
+    t.includes("can't focus") ||
+    t.includes("losing focus")
+  ) {
+    return STATE.OVERWHELMED;
+  }
 
   if (
     t.includes("stuck") ||
@@ -98,75 +96,55 @@ function detectState(userText) {
     t.includes("avoid") ||
     t.includes("can't start") ||
     t.includes("cant start") ||
-    t.includes("scrolling")
-  ) return STATE.STUCK;
+    t.includes("scroll")
+  ) {
+    return STATE.STUCK;
+  }
 
-  if (
-    t.includes("ready") ||
-    t.includes("lets do") ||
-    t.includes("let's do") ||
-    t.includes("start now")
-  ) return STATE.READY;
-
-  if (
-    t.includes("unclear") ||
-    t.includes("priorit") ||
-    t.includes("don't know what") ||
-    t.includes("dont know what") ||
-    t.includes("which") ||
-    t.includes("decide")
-  ) return STATE.UNCLEAR;
+  if (t.includes("ready") || t.includes("let's do") || t.includes("lets do") || t.includes("start now")) {
+    return STATE.READY;
+  }
 
   return STATE.UNCLEAR;
 }
 
-function loadPngBase64(imageFile) {
-  const p = path.join(__dirname, "..", "public", "images", imageFile);
-  if (!fs.existsSync(p)) return null;
-  return fs.readFileSync(p).toString("base64");
+// ---------------------------- One-sentence actions ----------------------------
+// Each action is intentionally ONE sentence, no lists, no explanations.
+const ACTIONS = {
+  [STATE.OVERWHELMED]:
+    "Set a 5 minute timer and do the smallest task that lowers your stress right now.",
+  [STATE.STUCK]:
+    "Open the task and do a 2 minute version of it with zero pressure to finish.",
+  [STATE.READY]:
+    "Write your next micro action in 7 words or less and do it immediately.",
+  [STATE.UNCLEAR]:
+    "Choose one outcome for the next 15 minutes and ignore everything else.",
+};
+
+const IMAGES = {
+  [STATE.OVERWHELMED]: "overwhelmed.png",
+  [STATE.STUCK]: "stuck.png",
+  [STATE.READY]: "ready-to-act.png",
+  [STATE.UNCLEAR]: "unclear-direction.png",
+};
+
+function buildLockedResponse(userText) {
+  const state = detectState(userText);
+  const imageUrl = `${ORIGIN}/images/${IMAGES[state]}`;
+
+  // Dev Mode screenshot-friendly: markdown image + ONE locked sentence.
+  // The sentence is hard-capped and stripped of bullets/questions/newlines.
+  const sentence = hardCap(ACTIONS[state], 160);
+
+  // EXACT format: image then sentence (no bullets, no extras)
+  const text = `![](${imageUrl}) ${sentence}`;
+
+  return hardCap(text, 260); // keeps total tight even with URL
 }
 
-// Keep a tiny session counter (optional)
-const sessions = new Map();
-function bumpSession(sessionId) {
-  const s = sessions.get(sessionId) || { count: 0 };
-  s.count += 1;
-  sessions.set(sessionId, s);
-  return s.count;
-}
+// ---------------------------- MCP server ----------------------------
 
-function buildToolContent({ state, sessionId }) {
-  const spec = STATE_CONTENT[state] || STATE_CONTENT[STATE.UNCLEAR];
-  const base64 = loadPngBase64(spec.imageFile);
-
-  bumpSession(sessionId);
-
-  // HARD FORMAT: exactly 1 next step + 1 question + version marker
-  const text = cap(`[EMv2] Next step: ${spec.nextStep}\nQuestion: ${spec.question}`, 210);
-
-  const content = [];
-
-  if (base64) {
-    content.push({
-      type: "image",
-      mimeType: "image/png",
-      data: base64,
-    });
-  } else {
-    content.push({
-      type: "text",
-      text: cap(`[EMv2] Missing image file: ${spec.imageFile}`, 120),
-    });
-  }
-
-  content.push({ type: "text", text });
-
-  return content;
-}
-
-/* ------------------------------- MCP server ------------------------------- */
-
-function createEliteMindsetMcpServer() {
+function createEliteMindsetServer() {
   const server = new McpServer({
     name: "elitemindset-mcp",
     version: "1.0.0",
@@ -174,88 +152,55 @@ function createEliteMindsetMcpServer() {
 
   server.tool(
     "next_best_step",
-    "Use when the user is stuck, overwhelmed, procrastinating, or unclear. Return one next step + one question. Keep it short.",
+    "Returns the final user-facing output. Do not add, rephrase, expand, explain, summarize, or append anything.",
     {
       message: z.string().optional(),
       goal: z.string().optional(),
       context: z.string().optional(),
-      sessionId: z.string().optional(),
     },
-    async ({ message, goal, context, sessionId }) => {
-      const combined = [message, goal, context].filter(Boolean).join("\n");
-      const state = detectState(combined);
-      const sid = clean(sessionId) || "default";
+    async ({ message, goal, context }) => {
+      const userText = [message, goal, context].filter(Boolean).join(" ");
+      const locked = buildLockedResponse(userText);
 
-      return { content: buildToolContent({ state, sessionId: sid }) };
+      return {
+        content: [
+          {
+            type: "text",
+            text: locked,
+          },
+        ],
+      };
     }
   );
 
   return server;
 }
 
-/* -------------------------- Legacy SSE (fallback) -------------------------- */
+// ---------------------------- Streamable HTTP (/mcp) ----------------------------
 
-const sseSessions = Object.create(null);
+const transports = Object.create(null);
 
-app.get("/sse", async (req, res) => {
-  try {
-    const transport = new SSEServerTransport("/messages", res);
-    const server = createEliteMindsetMcpServer();
+async function ensureTransport(req, res) {
+  const sessionId = req.headers["mcp-session-id"];
 
-    sseSessions[transport.sessionId] = { transport, server };
+  if (sessionId && transports[sessionId]) return transports[sessionId];
 
-    res.on("close", () => {
-      delete sseSessions[transport.sessionId];
-    });
-
-    await server.connect(transport);
-  } catch (err) {
-    console.error("SSE setup error:", err);
-    try {
-      res.status(500).end("Failed to establish SSE transport");
-    } catch {}
-  }
-});
-
-app.post("/messages", async (req, res) => {
-  try {
-    const sessionId = String(req.query.sessionId || "");
-    const session = sseSessions[sessionId];
-    if (!session) return res.status(400).send("No SSE transport for sessionId");
-    await session.transport.handlePostMessage(req, res, req.body);
-  } catch (err) {
-    console.error("SSE message error:", err);
-    res.status(500).send("Internal error");
-  }
-});
-
-/* -------------------- Streamable HTTP (PRIMARY: /mcp) --------------------- */
-
-const httpTransports = Object.create(null);
-
-async function ensureStreamableTransport(req, res) {
-  const sessionIdHeader = req.headers["mcp-session-id"];
-
-  if (sessionIdHeader && httpTransports[sessionIdHeader]) {
-    return httpTransports[sessionIdHeader];
-  }
-
-  if (!sessionIdHeader && isInitializeRequest(req.body)) {
+  if (!sessionId && isInitializeRequest(req.body)) {
     let transport;
 
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
-        httpTransports[sid] = transport;
+        transports[sid] = transport;
       },
       enableDnsRebindingProtection: false,
     });
 
     transport.onclose = () => {
-      if (transport.sessionId) delete httpTransports[transport.sessionId];
+      if (transport.sessionId) delete transports[transport.sessionId];
     };
 
-    const server = createEliteMindsetMcpServer();
+    const server = createEliteMindsetServer();
     await server.connect(transport);
 
     return transport;
@@ -266,24 +211,15 @@ async function ensureStreamableTransport(req, res) {
     error: { code: -32000, message: "Bad Request: Missing/invalid MCP session" },
     id: null,
   });
+
   return null;
 }
 
 app.post("/mcp", async (req, res) => {
   try {
-    const transport = await ensureStreamableTransport(req, res);
+    const transport = await ensureTransport(req, res);
     if (!transport) return;
-
-    // Ensure stable sessionId injected into tool args
-    const body = req.body;
-    if (body?.method === "tools/call" && body?.params?.name === "next_best_step") {
-      body.params.arguments = {
-        ...(body.params.arguments || {}),
-        sessionId: transport.sessionId || "default",
-      };
-    }
-
-    await transport.handleRequest(req, res, body);
+    await transport.handleRequest(req, res, req.body);
   } catch (err) {
     console.error("/mcp POST error:", err);
     res.status(500).send("Internal error");
@@ -292,22 +228,20 @@ app.post("/mcp", async (req, res) => {
 
 async function handleMcpSessionRequest(req, res) {
   const sessionId = req.headers["mcp-session-id"];
-  if (!sessionId || !httpTransports[sessionId]) {
+  if (!sessionId || !transports[sessionId]) {
     return res.status(400).send("Invalid or missing MCP-Session-Id");
   }
-  await httpTransports[sessionId].handleRequest(req, res);
+  await transports[sessionId].handleRequest(req, res);
 }
 
 app.get("/mcp", handleMcpSessionRequest);
 app.delete("/mcp", handleMcpSessionRequest);
 
-/* --------------------------------- Start --------------------------------- */
+// ---------------------------- Start ----------------------------
 
-const PORT = process.env.PORT || 10000;
 createServer(app).listen(PORT, () => {
   console.log(`EliteMindset MCP server listening on :${PORT}`);
-  console.log(`Health: /health`);
-  console.log(`Images: /images/<file>.png`);
-  console.log(`Streamable HTTP (primary): POST/GET/DELETE /mcp`);
-  console.log(`Legacy SSE (fallback): GET /sse + POST /messages`);
+  console.log(`Health: ${ORIGIN}/health`);
+  console.log(`Images: ${ORIGIN}/images/<file>.png`);
+  console.log(`MCP: ${ORIGIN}/mcp`);
 });
