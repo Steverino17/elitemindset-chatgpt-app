@@ -180,12 +180,4 @@ server.listen(PORT, () => {
   console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
   console.log(`SSE endpoint: http://localhost:${PORT}/sse`);
 });
-```
 
-**Commit message:** `Add MCP endpoint for ChatGPT`
-
----
-
-Then use this URL in ChatGPT:
-```
-https://elitemindset-chatgpt-app.onrender.com/mcp
