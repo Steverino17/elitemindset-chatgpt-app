@@ -15,21 +15,13 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 10000;
 
-// IMPORTANT: set this on Render to your service URL (no trailing slash)
-// Example for the new service:
+// IMPORTANT: set this on Render to your *current* service URL (no trailing slash).
+// For your new service, it should be:
 // PUBLIC_ORIGIN = https://elitemmindset-chatgpt-app-1.onrender.com
-const ORIGIN = (process.env.PUBLIC_ORIGIN || "").trim() || "";
+const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || "").trim();
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
-
-// Serve images at /images/<file>.png
-app.use(
-  "/images",
-  express.static(path.join(__dirname, "..", "public", "images"), {
-    fallthrough: true,
-  })
-);
 
 // CORS (permissive for testing)
 app.use((req, res, next) => {
@@ -40,19 +32,26 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------------------- ROUTING SAFETY NET ----------------------
-// This is the critical fix: Render often checks "/" by default.
-// Returning 200 here prevents "no-server" routing failures.
+// Serve images at /images/<file>.png
+app.use(
+  "/images",
+  express.static(path.join(__dirname, "..", "public", "images"), {
+    fallthrough: true,
+  })
+);
+
+// ---------------------- ROUTES THAT MUST ALWAYS WORK ----------------------
+// This is the critical Render “attach routing” fix:
 app.get("/", (req, res) => {
   res.status(200).type("text/plain").send("ok");
 });
 
 // Health endpoints (support multiple common checks)
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: "LOCKDOWN-v2" });
+  res.status(200).json({ status: "ok", version: "LOCKDOWN-v2" });
 });
 app.get("/healthz", (req, res) => {
-  res.json({ status: "ok", version: "LOCKDOWN-v2" });
+  res.status(200).json({ status: "ok", version: "LOCKDOWN-v2" });
 });
 
 // ---------------------- LOCKDOWN OUTPUT ----------------------
@@ -116,6 +115,7 @@ function detectState(userText) {
   return STATE.UNCLEAR;
 }
 
+// One sentence only.
 const ACTIONS = {
   [STATE.OVERWHELMED]: "Set a 5 minute timer and do one tiny task that lowers stress immediately.",
   [STATE.STUCK]: "Open the task and do the first 2 minutes only, then stop.",
@@ -132,13 +132,12 @@ const IMAGES = {
 
 function buildLockedText(userText) {
   const state = detectState(userText);
-
-  // If PUBLIC_ORIGIN isn't set yet, we still return the sentence (image optional)
-  const imageUrl = ORIGIN ? `${ORIGIN}/images/${IMAGES[state]}` : "";
   const sentence = cap(ACTIONS[state], 140);
 
-  if (!imageUrl) return cap(sentence, 260);
+  // If PUBLIC_ORIGIN not set, return sentence only (still valid)
+  if (!PUBLIC_ORIGIN) return cap(sentence, 260);
 
+  const imageUrl = `${PUBLIC_ORIGIN}/images/${IMAGES[state]}`;
   const text = `![](${imageUrl}) ${sentence}`;
   return cap(text, 260);
 }
