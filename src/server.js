@@ -15,22 +15,11 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 10000;
 
-// IMPORTANT: set this on Render to your *current* service URL (no trailing slash).
-// For your new service, it should be:
-// PUBLIC_ORIGIN = https://elitemmindset-chatgpt-app-1.onrender.com
-const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || "").trim();
+// IMPORTANT: must match your Render public URL (no trailing slash)
+const ORIGIN = process.env.PUBLIC_ORIGIN || "https://elitemmindset-chatgpt-app-1.onrender.com";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
-
-// CORS (permissive for testing)
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, MCP-Session-Id");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
-});
 
 // Serve images at /images/<file>.png
 app.use(
@@ -40,18 +29,27 @@ app.use(
   })
 );
 
-// ---------------------- ROUTES THAT MUST ALWAYS WORK ----------------------
-// This is the critical Render “attach routing” fix:
+// CORS (keep permissive for testing)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, MCP-Session-Id");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
+// ---------------------- Root (Render routing) ----------------------
 app.get("/", (req, res) => {
   res.status(200).type("text/plain").send("ok");
 });
 
-// Health endpoints (support multiple common checks)
+// ---------------------- Health ----------------------
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok", version: "LOCKDOWN-v2" });
+  res.json({ status: "ok", version: "LOCKDOWN-v2" });
 });
+
 app.get("/healthz", (req, res) => {
-  res.status(200).json({ status: "ok", version: "LOCKDOWN-v2" });
+  res.json({ status: "ok", version: "LOCKDOWN-v2" });
 });
 
 // ---------------------- LOCKDOWN OUTPUT ----------------------
@@ -60,13 +58,14 @@ function clean(s) {
 }
 
 function stripBad(s) {
+  // no bullets / no newlines / no questions / no emojis / no list markers
   return clean(s)
     .replace(/[\u2022\u2023\u25E6\u2043\u2219•●▪︎◦‣⁃]/g, "")
     .replace(/(\r\n|\n|\r)/g, " ")
     .replace(/\?/g, "")
     .replace(/:/g, "")
     .replace(/-/g, " ")
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "") // emoji block
     .trim();
 }
 
@@ -115,7 +114,7 @@ function detectState(userText) {
   return STATE.UNCLEAR;
 }
 
-// One sentence only.
+// One sentence only. No explanations. No options.
 const ACTIONS = {
   [STATE.OVERWHELMED]: "Set a 5 minute timer and do one tiny task that lowers stress immediately.",
   [STATE.STUCK]: "Open the task and do the first 2 minutes only, then stop.",
@@ -132,12 +131,10 @@ const IMAGES = {
 
 function buildLockedText(userText) {
   const state = detectState(userText);
+  const imageUrl = `${ORIGIN}/images/${IMAGES[state]}`;
   const sentence = cap(ACTIONS[state], 140);
 
-  // If PUBLIC_ORIGIN not set, return sentence only (still valid)
-  if (!PUBLIC_ORIGIN) return cap(sentence, 260);
-
-  const imageUrl = `${PUBLIC_ORIGIN}/images/${IMAGES[state]}`;
+  // markdown image + one sentence
   const text = `![](${imageUrl}) ${sentence}`;
   return cap(text, 260);
 }
@@ -160,7 +157,10 @@ function createEliteMindsetServer() {
     async ({ message, goal, context }) => {
       const userText = [message, goal, context].filter(Boolean).join(" ");
       const locked = buildLockedText(userText);
-      return { content: [{ type: "text", text: locked }] };
+
+      return {
+        content: [{ type: "text", text: locked }],
+      };
     }
   );
 
@@ -226,7 +226,7 @@ async function handleMcpSessionRequest(req, res) {
 app.get("/mcp", handleMcpSessionRequest);
 app.delete("/mcp", handleMcpSessionRequest);
 
-// ---------------------- Legacy fallback: /sse + /messages ----------------------
+// ---------------------- Legacy Dev-Mode Fallback: /sse + /messages ----------------------
 app.get("/sse", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -248,6 +248,7 @@ app.post("/messages", (req, res) => {
     const { messages } = req.body || {};
     const last = Array.isArray(messages) ? messages[messages.length - 1] : null;
     const userText = last?.content?.text || "";
+
     const locked = buildLockedText(userText);
 
     res.json({
@@ -261,6 +262,11 @@ app.post("/messages", (req, res) => {
 });
 
 // ---------------------- Start ----------------------
+// CRITICAL: bind to 0.0.0.0 so Render’s router can reach it
 createServer(app).listen(PORT, "0.0.0.0", () => {
   console.log(`EliteMindset server listening on :${PORT}`);
+  console.log(`Health: ${ORIGIN}/health`);
+  console.log(`Images: ${ORIGIN}/images/<file>.png`);
+  console.log(`MCP (primary): POST/GET/DELETE ${ORIGIN}/mcp`);
+  console.log(`Legacy (fallback): GET ${ORIGIN}/sse + POST ${ORIGIN}/messages`);
 });
